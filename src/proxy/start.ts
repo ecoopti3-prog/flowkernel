@@ -3,6 +3,7 @@ import { Client } from 'pg';
 import { optimizeQuery } from './optimizer';
 import { recordLineage } from './lineage';
 import { trackQuery } from './chain-detector';
+import { broadcast } from '../dashboard/server';
 
 function log(msg: string) {
   console.log(`[FlowKernel] ${new Date().toISOString()} ${msg}`);
@@ -46,7 +47,6 @@ export async function startProxy(
   const tableStats: Record<string, number> = {};
   const knownColumns: Record<string, string[]> = {};
 
-  // Load schema from DB
   const schemaClient = new Client(dbConfig);
   try {
     await schemaClient.connect();
@@ -58,14 +58,12 @@ export async function startProxy(
     for (const row of tables.rows) {
       const table = row.tablename;
       try {
-        // Row count estimate
         const count = await schemaClient.query(
           `SELECT reltuples::bigint AS estimate FROM pg_class WHERE relname = $1`,
           [table]
         );
         tableStats[table] = parseInt(count.rows[0]?.estimate ?? '0');
 
-        // Columns — exclude heavy types
         const cols = await schemaClient.query(`
           SELECT column_name, data_type
           FROM information_schema.columns
@@ -74,7 +72,7 @@ export async function startProxy(
         `, [table]);
 
         const HEAVY_TYPES = ['jsonb', 'json'];
-        const HEAVY_NAMES = ['bio', 'metadata', 'description', 'content', 'body', 'raw'];
+        const HEAVY_NAMES = ['bio', 'metadata', 'description', 'content', 'body', 'raw', 'notes'];
 
         const lightColumns = cols.rows
           .filter((r: { column_name: string; data_type: string }) => {
@@ -86,22 +84,19 @@ export async function startProxy(
 
         knownColumns[table] = lightColumns;
       } catch {
-        // skip table on error
+        // skip
       }
     }
 
     await schemaClient.end();
-
     log(`Schema loaded: ${Object.keys(knownColumns).join(', ')}`);
     for (const [table, cols] of Object.entries(knownColumns)) {
       log(`  ${table}: ${cols.join(', ')}`);
     }
-
-  } catch (err) {
+  } catch {
     log('Warning: Could not load schema. Using defaults.');
   }
 
-  // Start proxy server
   const server = net.createServer((clientSocket) => {
     const sessionId = generateId();
     log(`New connection [${sessionId}]`);
@@ -123,6 +118,14 @@ export async function startProxy(
         if (chain) {
           log(`[${sessionId}] CHAIN: ${chain.pattern} — ${chain.description}`);
           log(`[${sessionId}] HINT:  ${chain.hint}`);
+          broadcast('chain', {
+            timestamp: new Date().toISOString(),
+            sessionId,
+            pattern: chain.pattern,
+            tables: chain.tables,
+            description: chain.description,
+            hint: chain.hint,
+          });
         }
 
         if (result.optimizationsApplied.length > 0) {
@@ -142,6 +145,17 @@ export async function startProxy(
               inversionHints: result.inversionHints,
               estimatedRowsSaved: result.estimatedRowsSaved,
               executionTimeMs,
+            });
+
+            broadcast('optimization', {
+              lineageId: generateId(),
+              timestamp: new Date().toISOString(),
+              sessionId,
+              originalQuery: result.originalQuery,
+              optimizedQuery: result.optimizedQuery,
+              optimizationsApplied: result.optimizationsApplied,
+              inversionHints: result.inversionHints,
+              estimatedRowsSaved: result.estimatedRowsSaved,
             });
 
             const rewritten = rewritePacket(data, result.optimizedQuery);

@@ -131,8 +131,16 @@ async function commandStart() {
   }
 
   // Start the proxy inline
-  const { startProxy } = await import('./proxy/start');
-  await startProxy(db, proxyPort, dryRun);
+  const { startDashboard } = await import('./dashboard/server');
+const { startProxy } = await import('./proxy/start');
+
+await startDashboard(3000);
+
+// Open browser automatically
+const { exec } = await import('child_process');
+exec('start http://localhost:3000');
+
+await startProxy(db, proxyPort, dryRun);
 }
 
 function commandStop() {
