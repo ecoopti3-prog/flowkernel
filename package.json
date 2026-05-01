@@ -1,6 +1,6 @@
 {
   "name": "flowkernel",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "AI Data Movement Optimizer — intercepts DB queries, reduces data movement for AI agents",
   "main": "dist/index.js",
   "bin": {
@@ -10,7 +10,14 @@
     "build": "tsc",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["ai", "database", "proxy", "optimization", "mcp", "agents"],
+  "keywords": [
+    "ai",
+    "database",
+    "proxy",
+    "optimization",
+    "mcp",
+    "agents"
+  ],
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
