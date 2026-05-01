@@ -1,0 +1,7 @@
+node_modules/
+dist/
+flowkernel.config.json
+*.log
+src/seed.ts
+src/test-*.ts
+src/mcp/test-mcp.ts
