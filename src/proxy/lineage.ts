@@ -11,6 +11,7 @@ export interface LineageRecord {
   optimizationsApplied: string[];
   inversionHints: string[];
   estimatedRowsSaved?: number;
+  estimatedMonthlyCostUsd?: number;
   executionTimeMs?: number;
 }
 
@@ -23,13 +24,10 @@ function getLogPath(): string {
 
 export function recordLineage(record: LineageRecord): void {
   try {
-    const logPath = getLogPath();
-    console.log(`[Lineage] Writing to: ${logPath}`);
     const line = JSON.stringify(record) + '\n';
-    fs.appendFileSync(logPath, line, 'utf8');
-    console.log(`[Lineage] Written successfully`);
-  } catch (err) {
-    console.error(`[Lineage] ERROR:`, err);
+    fs.appendFileSync(getLogPath(), line, 'utf8');
+  } catch {
+    // Never break the proxy because of logging
   }
 }
 

@@ -144,6 +144,7 @@ export async function startProxy(
               optimizationsApplied: result.optimizationsApplied,
               inversionHints: result.inversionHints,
               estimatedRowsSaved: result.estimatedRowsSaved,
+              estimatedMonthlyCostUsd: result.estimatedMonthlyCostUsd,
               executionTimeMs,
             });
 

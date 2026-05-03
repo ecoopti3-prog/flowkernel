@@ -6,82 +6,10 @@ import { homedir } from 'os';
 const args = process.argv.slice(2);
 const command = args[0];
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-}
+const DISCLAIMER = '* estimate: Claude Sonnet pricing × rows × 100 queries/day';
 
-function printLineage() {
-  const last = parseInt(args[1] ?? '20');
-  const records = readLineage(last);
-
-  if (records.length === 0) {
-    console.log('No lineage records found. Run the proxy first.');
-    return;
-  }
-
-  console.log(`\n📋 Last ${records.length} optimizations:\n`);
-
-  for (const r of records) {
-    const time = new Date(r.timestamp).toLocaleTimeString();
-    const saved = r.estimatedRowsSaved
-      ? `~${r.estimatedRowsSaved.toLocaleString()} rows saved`
-      : '';
-
-    console.log(`  ${time} [${r.sessionId}]`);
-    console.log(`  Before: ${r.originalQuery}`);
-    console.log(`  After:  ${r.optimizedQuery}`);
-    console.log(`  Applied: ${r.optimizationsApplied.join(', ')} ${saved}`);
-    if (r.inversionHints.length > 0) {
-      console.log(`  Hint:   ${r.inversionHints[0]}`);
-    }
-    console.log();
-  }
-}
-
-function printChains() {
-  const dir = join(homedir(), '.flowkernel', 'lineage');
-  const date = new Date().toISOString().slice(0, 10);
-  const filePath = join(dir, `${date}.jsonl`);
-
-  if (!existsSync(filePath)) {
-    console.log('No chain data found. Run the proxy first.');
-    return;
-  }
-
-  const lines = readFileSync(filePath, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map(l => JSON.parse(l));
-
-  // Group by session
-  const sessions: Record<string, typeof lines> = {};
-  for (const r of lines) {
-    if (!sessions[r.sessionId]) sessions[r.sessionId] = [];
-    sessions[r.sessionId].push(r);
-  }
-
-  console.log(`\n🔗 Chain summary (today):\n`);
-
-  for (const [sessionId, records] of Object.entries(sessions)) {
-    const tables = [...new Set(records.map((r: any) => {
-      const m = r.originalQuery.match(/FROM\s+(\w+)/i);
-      return m?.[1] ?? '?';
-    }))];
-
-    const totalRows = records.reduce((sum: number, r: any) => {
-      return sum + (r.estimatedRowsSaved ?? 0);
-    }, 0);
-
-    console.log(`  Session: ${sessionId}`);
-    console.log(`  Queries: ${records.length}`);
-    console.log(`  Tables:  ${tables.join(' → ')}`);
-    if (totalRows > 0) {
-      console.log(`  Saved:   ~${totalRows.toLocaleString()} rows`);
-    }
-    console.log();
-  }
+function formatCost(usd: number): string {
+  return `~$${usd.toFixed(2)}/month*`;
 }
 
 function printStatus() {
@@ -90,7 +18,7 @@ function printStatus() {
   const filePath = join(dir, `${date}.jsonl`);
 
   if (!existsSync(filePath)) {
-    console.log('No data yet. Start the proxy: npx tsx src/proxy/proxy.ts');
+    console.log('No data yet. Start the proxy: npx flowkernel start --db postgres://...');
     return;
   }
 
@@ -100,9 +28,8 @@ function printStatus() {
     .map(l => JSON.parse(l));
 
   const totalOptimizations = lines.length;
-  const totalRowsSaved = lines.reduce((sum: number, r: any) => {
-    return sum + (r.estimatedRowsSaved ?? 0);
-  }, 0);
+  const totalRowsSaved = lines.reduce((sum: number, r: any) => sum + (r.estimatedRowsSaved ?? 0), 0);
+  const totalCostSaved = lines.reduce((sum: number, r: any) => sum + (r.estimatedMonthlyCostUsd ?? 0), 0);
   const uniqueSessions = new Set(lines.map((r: any) => r.sessionId)).size;
   const appliedCounts: Record<string, number> = {};
   for (const r of lines) {
@@ -115,11 +42,107 @@ function printStatus() {
   console.log(`  Optimizations:  ${totalOptimizations}`);
   console.log(`  Sessions:       ${uniqueSessions}`);
   console.log(`  Rows saved:     ~${totalRowsSaved.toLocaleString()}`);
+  console.log(`  Cost saved:     ${formatCost(totalCostSaved)}`);
   console.log(`\n  Breakdown:`);
   for (const [opt, count] of Object.entries(appliedCounts)) {
     console.log(`    ${opt}: ${count}x`);
   }
+  console.log(`\n  ${DISCLAIMER}`);
   console.log();
+}
+
+function printDoctor() {
+  const records = readLineage(100);
+
+  if (records.length === 0) {
+    console.log('No data yet. Run the proxy first: npx flowkernel start --db postgres://...');
+    return;
+  }
+
+  // Group by optimization type (triage logic from CyberSentinel)
+  const groups: Record<string, {
+    records: typeof records;
+    totalRows: number;
+    totalCost: number;
+  }> = {};
+
+  for (const r of records) {
+    const key = r.optimizationsApplied[0] ?? 'unknown';
+    if (!groups[key]) {
+      groups[key] = { records: [], totalRows: 0, totalCost: 0 };
+    }
+    groups[key].records.push(r);
+    groups[key].totalRows += r.estimatedRowsSaved ?? 0;
+    groups[key].totalCost += r.estimatedMonthlyCostUsd ?? 0;
+  }
+
+  // Sort by cost — highest first
+  const sorted = Object.entries(groups)
+    .sort(([, a], [, b]) => b.totalCost - a.totalCost)
+    .slice(0, 3);
+
+  const totalCost = sorted.reduce((sum, [, g]) => sum + g.totalCost, 0);
+  const totalRows = sorted.reduce((sum, [, g]) => sum + g.totalRows, 0);
+
+  console.log(`\n🧠 Top Data Waste Issues (today)\n`);
+  console.log('━'.repeat(50));
+
+  const priority = ['Fix this first', 'Fix this week', 'Fix when ready'];
+  const emoji = ['🔴', '🔴', '🟠'];
+
+  sorted.forEach(([type, group], i) => {
+    const sample = group.records[0];
+    const hint = sample.inversionHints[0] ?? '';
+
+    console.log(`\n#${i + 1} ${emoji[i]} ${priority[i]} — saves ${formatCost(group.totalCost)}`);
+    console.log(`   Pattern:  ${type}`);
+    console.log(`   Fetched:  ~${group.totalRows.toLocaleString()} rows`);
+    console.log(`   Fix:`);
+    console.log(`     ${hint}`);
+
+    if (sample.originalQuery !== sample.optimizedQuery) {
+      console.log(`\n     -- Instead of:`);
+      console.log(`     ${sample.originalQuery}`);
+      console.log(`\n     -- Use:`);
+      console.log(`     ${sample.optimizedQuery}`);
+    }
+
+    console.log('\n' + '━'.repeat(50));
+  });
+
+  console.log(`\nTotal estimated waste: ${formatCost(totalCost)}`);
+  console.log(`Rows analyzed:         ~${totalRows.toLocaleString()}`);
+  console.log(`Sessions today:        ${new Set(records.map(r => r.sessionId)).size}`);
+  console.log(`\n${DISCLAIMER}\n`);
+}
+
+function printLineage() {
+  const last = parseInt(args[1] ?? '10');
+  const records = readLineage(last);
+
+  if (records.length === 0) {
+    console.log('No lineage records found. Run the proxy first.');
+    return;
+  }
+
+  console.log(`\n📋 Last ${records.length} optimizations:\n`);
+
+  for (const r of records) {
+    const time = new Date(r.timestamp).toLocaleTimeString();
+    const cost = r.estimatedMonthlyCostUsd
+      ? ` · ${formatCost(r.estimatedMonthlyCostUsd)}`
+      : '';
+
+    console.log(`  ${time} [${r.sessionId}]`);
+    console.log(`  Before:  ${r.originalQuery}`);
+    console.log(`  After:   ${r.optimizedQuery}`);
+    console.log(`  Applied: ${r.optimizationsApplied.join(', ')}${cost}`);
+    if (r.inversionHints.length > 0) {
+      console.log(`  Hint:    ${r.inversionHints[0]}`);
+    }
+    console.log();
+  }
+  console.log(`${DISCLAIMER}\n`);
 }
 
 function printHelp() {
@@ -127,23 +150,23 @@ function printHelp() {
 FlowKernel CLI
 
 Commands:
-  status              Show today's optimization summary
-  lineage [n]         Show last N optimizations (default: 20)
-  chains              Show chain patterns detected today
-  help                Show this help
+  status          Show today's optimization summary with cost savings
+  doctor          Show top 3 waste issues with fixes and cost (recommended)
+  lineage [n]     Show last N optimizations (default: 10)
+  help            Show this help
 
 Examples:
-  npx tsx src/cli/index.ts status
-  npx tsx src/cli/index.ts lineage 10
-  npx tsx src/cli/index.ts chains
+  npx flowkernel status
+  npx flowkernel doctor
+  npx flowkernel lineage 20
   `);
 }
 
 switch (command) {
-  case 'status':   printStatus();  break;
-  case 'lineage':  printLineage(); break;
-  case 'chains':   printChains();  break;
-  case 'help':     printHelp();    break;
+  case 'status':  printStatus();  break;
+  case 'doctor':  printDoctor();  break;
+  case 'lineage': printLineage(); break;
+  case 'help':    printHelp();    break;
   default:
     console.log(`Unknown command: ${command ?? '(none)'}`);
     printHelp();
