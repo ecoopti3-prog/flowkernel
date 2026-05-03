@@ -184,11 +184,23 @@ Examples:
   `);
 }
 
+async function commandDiagnose() {
+  const db = parseDbArg();
+  if (!db) {
+    console.error('❌ Missing --db flag\n');
+    console.error('Usage: npx flowkernel diagnose --db postgres://user:pass@host:5432/dbname');
+    process.exit(1);
+  }
+  const { runDiagnose } = await import('./cli/diagnose');
+  await runDiagnose(db);
+}
+
 switch (command) {
-  case 'start':  commandStart();  break;
-  case 'stop':   commandStop();   break;
-  case 'status': commandStatus(); break;
-  case 'help':   printHelp();     break;
+  case 'start':    commandStart();    break;
+  case 'stop':     commandStop();     break;
+  case 'status':   commandStatus();   break;
+  case 'diagnose': commandDiagnose(); break;
+  case 'help':     printHelp();       break;
   default:
     printHelp();
 }

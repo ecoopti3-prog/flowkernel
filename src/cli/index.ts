@@ -29,8 +29,17 @@ function printStatus() {
 
   const totalOptimizations = lines.length;
   const totalRowsSaved = lines.reduce((sum: number, r: any) => sum + (r.estimatedRowsSaved ?? 0), 0);
-  const totalCostSaved = lines.reduce((sum: number, r: any) => sum + (r.estimatedMonthlyCostUsd ?? 0), 0);
   const uniqueSessions = new Set(lines.map((r: any) => r.sessionId)).size;
+
+  // Real cost from frequency data
+  const { getFrequencies, calculateRealCost } = require('../proxy/frequency');
+  const frequencies = getFrequencies();
+  const totalRealCost = frequencies.reduce((sum: number, f: any) => {
+    return sum + calculateRealCost(f.totalRowsSaved / f.count, f.count);
+  }, 0);
+
+  const hasRealData = frequencies.length > 0;
+
   const appliedCounts: Record<string, number> = {};
   for (const r of lines) {
     for (const opt of r.optimizationsApplied) {
@@ -42,12 +51,18 @@ function printStatus() {
   console.log(`  Optimizations:  ${totalOptimizations}`);
   console.log(`  Sessions:       ${uniqueSessions}`);
   console.log(`  Rows saved:     ~${totalRowsSaved.toLocaleString()}`);
-  console.log(`  Cost saved:     ${formatCost(totalCostSaved)}`);
+
+  if (hasRealData) {
+    console.log(`  Cost saved:     ~$${totalRealCost.toFixed(2)}/month`);
+    console.log(`  (based on actual query frequency measured today)`);
+  } else {
+    console.log(`  Cost saved:     run proxy for a few hours to measure`);
+  }
+
   console.log(`\n  Breakdown:`);
   for (const [opt, count] of Object.entries(appliedCounts)) {
     console.log(`    ${opt}: ${count}x`);
   }
-  console.log(`\n  ${DISCLAIMER}`);
   console.log();
 }
 
@@ -59,29 +74,47 @@ function printDoctor() {
     return;
   }
 
-  // Group by optimization type (triage logic from CyberSentinel)
+  const { getFrequencies, calculateRealCost } = require('../proxy/frequency');
+  const frequencies = getFrequencies();
+  const freqMap: Record<string, number> = {};
+  for (const f of frequencies) {
+    freqMap[f.queryHash] = f.count;
+  }
+
+  // Group by optimization type
   const groups: Record<string, {
     records: typeof records;
     totalRows: number;
-    totalCost: number;
+    totalRealCost: number;
+    timesRun: number;
   }> = {};
 
   for (const r of records) {
     const key = r.optimizationsApplied[0] ?? 'unknown';
     if (!groups[key]) {
-      groups[key] = { records: [], totalRows: 0, totalCost: 0 };
+      groups[key] = { records: [], totalRows: 0, totalRealCost: 0, timesRun: 0 };
     }
     groups[key].records.push(r);
     groups[key].totalRows += r.estimatedRowsSaved ?? 0;
-    groups[key].totalCost += r.estimatedMonthlyCostUsd ?? 0;
+
+    // Find frequency for this query
+    const crypto = require('crypto');
+    const hash = crypto.createHash('md5')
+      .update(r.originalQuery.trim().toLowerCase().replace(/\s+/g, ' '))
+      .digest('hex').slice(0, 8);
+    const timesRun = freqMap[hash] ?? 1;
+    groups[key].timesRun += timesRun;
+    groups[key].totalRealCost += calculateRealCost(r.estimatedRowsSaved ?? 0, timesRun);
   }
 
-  // Sort by cost — highest first
+  const hasRealFrequency = frequencies.length > 0;
+
+  // Sort by cost
   const sorted = Object.entries(groups)
-    .sort(([, a], [, b]) => b.totalCost - a.totalCost)
+    .sort(([, a], [, b]) => b.totalRealCost - a.totalRealCost)
     .slice(0, 3);
 
-  const totalCost = sorted.reduce((sum, [, g]) => sum + g.totalCost, 0);
+  const totalCost = sorted.reduce((sum, [, g]) => sum + g.totalRealCost, 0);
   const totalRows = sorted.reduce((sum, [, g]) => sum + g.totalRows, 0);
 
   console.log(`\n🧠 Top Data Waste Issues (today)\n`);
@@ -93,10 +126,16 @@ function printDoctor() {
   sorted.forEach(([type, group], i) => {
     const sample = group.records[0];
     const hint = sample.inversionHints[0] ?? '';
+    const costDisplay = hasRealFrequency
+      ? `~$${group.totalRealCost.toFixed(2)}/month (measured)`
+      : `unknown — proxy needs more time`;
 
-    console.log(`\n#${i + 1} ${emoji[i]} ${priority[i]} — saves ${formatCost(group.totalCost)}`);
+    console.log(`\n#${i + 1} ${emoji[i]} ${priority[i]} — saves ${costDisplay}`);
     console.log(`   Pattern:  ${type}`);
     console.log(`   Fetched:  ~${group.totalRows.toLocaleString()} rows`);
+    if (hasRealFrequency) {
+      console.log(`   Ran:      ${group.timesRun}x today`);
+    }
     console.log(`   Fix:`);
     console.log(`     ${hint}`);
 
@@ -110,10 +149,13 @@ function printDoctor() {
     console.log('\n' + '━'.repeat(50));
   });
 
-  console.log(`\nTotal estimated waste: ${formatCost(totalCost)}`);
-  console.log(`Rows analyzed:         ~${totalRows.toLocaleString()}`);
-  console.log(`Sessions today:        ${new Set(records.map(r => r.sessionId)).size}`);
-  console.log(`\n${DISCLAIMER}\n`);
+  console.log(`\nTotal estimated waste: ~$${totalCost.toFixed(2)}/month`);
+  if (hasRealFrequency) {
+    console.log(`Based on actual query frequency measured today.`);
+  } else {
+    console.log(`Run proxy for a few hours to get accurate cost measurement.`);
+  }
+  console.log(`Sessions today: ${new Set(records.map(r => r.sessionId)).size}\n`);
 }
 
 function printLineage() {

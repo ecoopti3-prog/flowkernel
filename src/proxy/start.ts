@@ -4,6 +4,7 @@ import { optimizeQuery } from './optimizer';
 import { recordLineage } from './lineage';
 import { trackQuery } from './chain-detector';
 import { broadcast } from '../dashboard/server';
+import { trackQueryFrequency } from './frequency';
 
 function log(msg: string) {
   console.log(`[FlowKernel] ${new Date().toISOString()} ${msg}`);
@@ -147,6 +148,8 @@ export async function startProxy(
               estimatedMonthlyCostUsd: result.estimatedMonthlyCostUsd,
               executionTimeMs,
             });
+
+            trackQueryFrequency(result.originalQuery, result.estimatedRowsSaved ?? 0);
 
             broadcast('optimization', {
               lineageId: generateId(),
