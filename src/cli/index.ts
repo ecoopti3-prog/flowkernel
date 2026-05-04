@@ -38,7 +38,33 @@ function printStatus() {
     return sum + calculateRealCost(f.totalRowsSaved / f.count, f.count);
   }, 0);
 
-  const hasRealData = frequencies.length > 0;
+  // Determine data maturity
+  const firstSeen = frequencies.length > 0
+    ? new Date(frequencies[frequencies.length - 1].firstSeen)
+    : null;
+  const hoursOfData = firstSeen
+    ? (Date.now() - firstSeen.getTime()) / (1000 * 60 * 60)
+    : 0;
+
+  const dataMaturity = hoursOfData === 0 ? 'none'
+    : hoursOfData < 1 ? 'early'
+    : hoursOfData < 6 ? 'partial'
+    : 'mature';
+
+  function formatCostByMaturity(cost: number, maturity: string): string {
+    switch (maturity) {
+      case 'none':
+        return 'run proxy for 1+ hours to measure';
+      case 'early':
+        return `$${Math.round(cost * 0.5)}–$${Math.round(cost * 3)}/month (early estimate)`;
+      case 'partial':
+        return `~$${cost.toFixed(0)}/month (partial data)`;
+      case 'mature':
+        return `~$${cost.toFixed(2)}/month (measured)`;
+      default:
+        return 'unknown';
+    }
+  }
 
   const appliedCounts: Record<string, number> = {};
   for (const r of lines) {
@@ -51,13 +77,7 @@ function printStatus() {
   console.log(`  Optimizations:  ${totalOptimizations}`);
   console.log(`  Sessions:       ${uniqueSessions}`);
   console.log(`  Rows saved:     ~${totalRowsSaved.toLocaleString()}`);
-
-  if (hasRealData) {
-    console.log(`  Cost saved:     ~$${totalRealCost.toFixed(2)}/month`);
-    console.log(`  (based on actual query frequency measured today)`);
-  } else {
-    console.log(`  Cost saved:     run proxy for a few hours to measure`);
-  }
+  console.log(`  Cost saved:     ${formatCostByMaturity(totalRealCost, dataMaturity)}`);
 
   console.log(`\n  Breakdown:`);
   for (const [opt, count] of Object.entries(appliedCounts)) {
@@ -107,7 +127,33 @@ function printDoctor() {
     groups[key].totalRealCost += calculateRealCost(r.estimatedRowsSaved ?? 0, timesRun);
   }
 
-  const hasRealFrequency = frequencies.length > 0;
+  // Determine data maturity
+  const firstSeen = frequencies.length > 0
+    ? new Date(frequencies[frequencies.length - 1].firstSeen)
+    : null;
+  const hoursOfData = firstSeen
+    ? (Date.now() - firstSeen.getTime()) / (1000 * 60 * 60)
+    : 0;
+
+  const dataMaturity = hoursOfData === 0 ? 'none'
+    : hoursOfData < 1 ? 'early'
+    : hoursOfData < 6 ? 'partial'
+    : 'mature';
+
+  function formatCostByMaturity(cost: number, maturity: string): string {
+    switch (maturity) {
+      case 'none':
+        return 'run proxy for 1+ hours to measure';
+      case 'early':
+        return `$${Math.round(cost * 0.5)}–$${Math.round(cost * 3)}/month (early estimate)`;
+      case 'partial':
+        return `~$${cost.toFixed(0)}/month (partial data)`;
+      case 'mature':
+        return `~$${cost.toFixed(2)}/month (measured)`;
+      default:
+        return 'unknown';
+    }
+  }
 
   // Sort by cost
   const sorted = Object.entries(groups)
@@ -115,7 +161,6 @@ function printDoctor() {
     .slice(0, 3);
 
   const totalCost = sorted.reduce((sum, [, g]) => sum + g.totalRealCost, 0);
-  const totalRows = sorted.reduce((sum, [, g]) => sum + g.totalRows, 0);
 
   console.log(`\n🧠 Top Data Waste Issues (today)\n`);
   console.log('━'.repeat(50));
@@ -126,14 +171,12 @@ function printDoctor() {
   sorted.forEach(([type, group], i) => {
     const sample = group.records[0];
     const hint = sample.inversionHints[0] ?? '';
-    const costDisplay = hasRealFrequency
-      ? `~$${group.totalRealCost.toFixed(2)}/month (measured)`
-      : `unknown — proxy needs more time`;
+    const costDisplay = formatCostByMaturity(group.totalRealCost, dataMaturity);
 
     console.log(`\n#${i + 1} ${emoji[i]} ${priority[i]} — saves ${costDisplay}`);
     console.log(`   Pattern:  ${type}`);
     console.log(`   Fetched:  ~${group.totalRows.toLocaleString()} rows`);
-    if (hasRealFrequency) {
+    if (dataMaturity === 'partial' || dataMaturity === 'mature') {
       console.log(`   Ran:      ${group.timesRun}x today`);
     }
     console.log(`   Fix:`);
@@ -149,12 +192,7 @@ function printDoctor() {
     console.log('\n' + '━'.repeat(50));
   });
 
-  console.log(`\nTotal estimated waste: ~$${totalCost.toFixed(2)}/month`);
-  if (hasRealFrequency) {
-    console.log(`Based on actual query frequency measured today.`);
-  } else {
-    console.log(`Run proxy for a few hours to get accurate cost measurement.`);
-  }
+  console.log(`\nTotal estimated waste: ${formatCostByMaturity(totalCost, dataMaturity)}`);
   console.log(`Sessions today: ${new Set(records.map(r => r.sessionId)).size}\n`);
 }
 

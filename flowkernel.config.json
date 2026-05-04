@@ -2,7 +2,7 @@
   "db": "postgres://postgres:dev123@localhost:5432/testdb",
   "proxy_port": 5433,
   "dry_run": false,
-  "created_at": "2026-05-03T20:51:29.578Z",
+  "created_at": "2026-05-04T04:21:13.181Z",
   "optimizations": {
     "column_pruning": true,
     "auto_limit": true,
