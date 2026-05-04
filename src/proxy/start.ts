@@ -130,11 +130,20 @@ export async function startProxy(
         }
 
         if (result.optimizationsApplied.length > 0) {
-          log(`[${sessionId}] ORIGINAL:  ${result.originalQuery}`);
+        if (!dryRun) {
+          // Reality shock — only show when waste is significant
+            const rowsSaved = result.estimatedRowsSaved ?? 0;
+            const costSaved = result.estimatedMonthlyCostUsd ?? 0;
 
-          if (!dryRun) {
-            log(`[${sessionId}] OPTIMIZED: ${result.optimizedQuery}`);
-            log(`[${sessionId}] APPLIED:   ${result.optimizationsApplied.join(', ')}`);
+        if (rowsSaved > 500) {
+          log(`[${sessionId}] 🚨 WASTE DETECTED`);
+          log(`[${sessionId}]    fetched:  ${result.originalQuery}`);
+          log(`[${sessionId}]    saved:    ~${rowsSaved.toLocaleString()} rows · ${costSaved > 0 ? `$${costSaved.toFixed(2)}/month*` : ''}`);
+          log(`[${sessionId}]    fixed:    ${result.optimizedQuery}`);
+          log(`[${sessionId}]    applied:  ${result.optimizationsApplied.join(', ')}`);
+         } else {
+          log(`[${sessionId}] ✓ optimized: ${result.optimizationsApplied.join(', ')}`);
+         }
 
             recordLineage({
               lineageId: generateId(),
